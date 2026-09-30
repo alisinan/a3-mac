@@ -4,6 +4,9 @@
 
 Use the **Lenovo ThinkReality A3** AR glasses on a Mac, as a normal monitor and as a teleprompter.
 
+<p align="center"><img src="docs/demo.gif" width="480" alt="Teleprompter text seen through the A3's lens"><br>
+<sub>The built-in teleprompter, filmed through the A3's lens.</sub></p>
+
 Lenovo only ever shipped Windows (and Motorola phone) software for the A3, and the product is end-of-life.
 Plugged into a Mac, the glasses show nothing. This project gets them working:
 
@@ -15,6 +18,13 @@ Plugged into a Mac, the glasses show nothing. This project gets them working:
   Black is transparent on the glasses, so only the text is visible. Includes legibility settings
   (weight, extra thickness, letter spacing) that help if you don't wear your glasses under the A3.
 - Menu-bar app, optional launch at login.
+
+## Background
+
+I was given a ThinkReality A3 to test when it launched. It works with my ThinkPad, but for the last two
+years I've mostly used a Mac, and on a Mac the glasses show nothing, so they ended up on a shelf.
+One evening I took them down and wondered whether I could solve this together with Claude (Opus 5.5).
+A few hours later they worked as a monitor and a teleprompter. This repo is the result.
 
 > Not affiliated with or endorsed by Lenovo. "Lenovo" and "ThinkReality" are trademarks of Lenovo.
 > Use at your own risk. This project only sends the display commands Lenovo's own software sends,
