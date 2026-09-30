@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A3 Prompter</title>
+<style>
+  :root {
+    --bg: #111317; --panel: #1a1d23; --line: #2a2e36; --text: #e8eaed; --muted: #9aa0a6; --accent: #f5c542;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+
+  /* ---------- Control window ---------- */
+  #control { display: none; height: 100%; padding: 16px; gap: 16px; grid-template-columns: 1fr 320px; grid-template-rows: auto 1fr; }
+  body.role-control #control { display: grid; }
+  header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status b { color: var(--accent); font-weight: 600; }
+  button { background: #2b3038; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #343a44; }
+  button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+  textarea { width: 100%; height: 100%; resize: none; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 16px; font-size: 16px; line-height: 1.5; font-family: inherit; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow: auto; }
+  .row { margin-bottom: 14px; }
+  .row label { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .row label span { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  select, input[type=color] { width: 100%; background: #2b3038; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; height: 34px; }
+  .group { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; margin: 4px 0 12px; }
+  .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 4px 0 14px; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--accent); }
+  body.native .browser-only { display: none; }
+  .keys { font-size: 12px; color: var(--muted); line-height: 1.7; border-top: 1px solid var(--line); padding-top: 10px; }
+  kbd { background: #2b3038; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; color: var(--text); }
+  @media (max-width: 760px) { #control { grid-template-columns: 1fr; grid-template-rows: auto 40vh auto; } }
+
+  /* ---------- Display window ---------- */
+  #display { display: none; position: fixed; inset: 0; background: #000; overflow: hidden; cursor: none; }
+  body.role-display { background: #000; }
+  body.role-display #display { display: flex; }
+  .pane { position: absolute; top: 0; height: 100%; overflow: hidden; }
+  .stage { position: absolute; top: 0; left: 0; height: 100%; width: 100%; transform-origin: 0 0; }
+  .sbs-half .stage { width: 200%; transform: scaleX(0.5); }
+  .col { margin: 0 auto; white-space: pre-wrap; word-wrap: break-word; will-change: transform; font-weight: 500; }
+  .col .cue { opacity: 0.45; font-style: italic; }
+  .guide { position: absolute; left: 1.5%; width: 2.2%; height: 0; border-top: 0.35vh solid; opacity: 0.35; }
+  .overlay { position: absolute; top: 3vh; left: 0; right: 0; text-align: center; font-size: 3vh; color: #888; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<div id="control">
+  <header>
+    <h1>A3 Prompter</h1>
+    <button class="primary" id="openDisplay">Open display window</button>
+    <button id="playBtn">Play / Pause</button>
+    <button id="resetBtn">Back to top</button>
+    <span class="status" id="status">Display: <b>not open</b></span>
+  </header>
+  <textarea id="text" spellcheck="false" placeholder="Paste your script here…"></textarea>
+  <aside>
+    <div class="progress"><i id="prog"></i></div>
+    <div class="row"><label>Speed <span id="v_speed"></span></label><input type="range" id="speed" min="5" max="400" step="5"></div>
+    <div class="row"><label>Font size <span id="v_font"></span></label><input type="range" id="font" min="2" max="16" step="0.5"></div>
+    <div class="row"><label>Column width <span id="v_width"></span></label><input type="range" id="width" min="30" max="100" step="1"></div>
+    <div class="row"><label>Reading line position <span id="v_top"></span></label><input type="range" id="top" min="5" max="60" step="1"></div>
+    <div class="row"><label>Line height <span id="v_lh"></span></label><input type="range" id="lh" min="1" max="2" step="0.05"></div>
+    <div class="row"><label>Text color</label><input type="color" id="color"></div>
+    <div class="group">Legibility</div>
+    <div class="row"><label>Font weight <span id="v_weight"></span></label><input type="range" id="weight" min="300" max="900" step="100"></div>
+    <div class="row"><label>Extra thickness <span id="v_stroke"></span></label><input type="range" id="stroke" min="0" max="4" step="0.5"></div>
+    <div class="row"><label>Letter spacing <span id="v_spacing"></span></label><input type="range" id="spacing" min="0" max="0.25" step="0.01"></div>
+    <div class="row browser-only"><label>Stereo mode</label>
+      <select id="sbs">
+        <option value="left">Left eye only (3840×1080)</option>
+        <option value="right">Right eye only (3840×1080)</option>
+        <option value="off">Off (one image, 1920×1080)</option>
+        <option value="full">Side-by-side (3840×1080)</option>
+        <option value="half">Side-by-side, squeezed (1920×1080)</option>
+      </select>
+    </div>
+    <div class="row browser-only"><label>Depth (stereo only) <span id="v_depth"></span></label><input type="range" id="depth" min="-40" max="40" step="1"></div>
+    <div class="keys">
+      <kbd>Space</kbd> / <kbd>PgDn</kbd> play / pause<br>
+      <kbd>↑</kbd> <kbd>↓</kbd> speed &nbsp; <kbd>←</kbd> <kbd>→</kbd> jump 3 lines<br>
+      <kbd>PgUp</kbd> back 3 lines &nbsp; <kbd>+</kbd> <kbd>−</kbd> font size<br>
+      <span class="browser-only"><kbd>S</kbd> stereo mode &nbsp; </span><kbd>R</kbd> back to top<br>
+      <span class="browser-only"><kbd>F</kbd> fullscreen (on display window)<br></span>
+      Mouse wheel on display: manual scroll<br>
+      Text in [brackets] is shown dimmed as a cue.
+    </div>
+  </aside>
+</div>
+
+<div id="display"></div>
+
+<script>
+(() => {
+  const ROLE = window.__A3_ROLE || (location.hash === '#display' ? 'display' : 'control');
+  document.body.classList.add('role-' + ROLE);
+
+  const DEFAULTS = {
+    text: "Welcome to A3 Prompter.\n\nPaste your script in the control window. [pause]\n\nPress Space to start and stop scrolling. Use the arrow keys to change speed or jump back a few lines.\n\nBlack is transparent on the glasses, so only the text floats in front of you.",
+    speed: 60, font: 6, width: 70, top: 22, lh: 1.35, color: '#ffffff', sbs: 'left', depth: 0, weight: 500, stroke: 0, spacing: 0
+  };
+  const KEY = 'a3-prompter-settings';
+  let S = { ...DEFAULTS };
+  try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // ---------- messaging between the two windows ----------
+  // Browser: the two windows talk with postMessage. Inside the A3 Monitor app: through the native bridge.
+  const NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.a3);
+  if (NATIVE) {
+    // In the app the page runs on the 1920×1080 "Glasses Screen"; A3 Monitor copies it to the eyes
+    // (eye mode and distance are set from the A3 menu), so the page itself always draws one image.
+    document.body.classList.add('native');
+    S.sbs = 'off';
+    S.depth = 0;
+  }
+  let peer = ROLE === 'display' ? window.opener : null;
+  let nativeConnected = false;
+  const send = (msg) => {
+    try {
+      if (NATIVE) window.webkit.messageHandlers.a3.postMessage(JSON.stringify(msg));
+      else if (peer && !peer.closed) peer.postMessage(msg, '*');
+    } catch (e) {}
+  };
+
+  function setS(patch, fromPeer) {
+    Object.assign(S, patch);
+    save();
+    if (ROLE === 'control') syncUI(); else rebuild();
+    if (!fromPeer) send({ type: 'settings', S });
+  }
+  function act(cmd, v) {
+    if (ROLE === 'display') doCmd(cmd, v); else send({ type: 'cmd', cmd, v });
+  }
+
+  function receive(m, source) {
+    m = m || {};
+    if (m.type === 'settings') setS(m.S, true);
+    else if (m.type === 'cmd' && ROLE === 'display') doCmd(m.cmd, m.v);
+    else if (m.type === 'hello' && ROLE === 'control') {
+      if (source) peer = source;
+      nativeConnected = true;
+      send({ type: 'settings', S }); setStatus();
+    }
+    else if (m.type === 'bye' && ROLE === 'control') { nativeConnected = false; setStatus(); }
+    else if (m.type === 'pos' && ROLE === 'control') {
+      nativeConnected = true;
+      document.getElementById('prog').style.width = (m.p * 100).toFixed(1) + '%';
+      running = m.running; setStatus();
+    }
+  }
+  window.addEventListener('message', (ev) => receive(ev.data, ev.source));
+  window.__a3Receive = (m) => receive(m, null);
+
+  // ---------- keyboard (works in both windows) ----------
+  const SBS_ORDER = NATIVE ? ['off'] : ['left', 'right', 'full', 'half', 'off'];
+  document.addEventListener('keydown', (e) => {
+    const t = e.target.tagName;
+    if (t === 'TEXTAREA' || t === 'INPUT' || t === 'SELECT' || e.metaKey || e.ctrlKey) return;
+    let handled = true;
+    switch (e.key) {
+      case ' ': case 'PageDown': case 'b': case 'B': act('toggle'); break;
+      case 'PageUp': case 'ArrowLeft': act('jump', -3); break;
+      case 'ArrowRight': act('jump', 3); break;
+      case 'ArrowUp': setS({ speed: Math.min(400, S.speed + 10) }); break;
+      case 'ArrowDown': setS({ speed: Math.max(5, S.speed - 10) }); break;
+      case '+': case '=': setS({ font: Math.min(16, S.font + 0.5) }); break;
+      case '-': case '_': setS({ font: Math.max(2, S.font - 0.5) }); break;
+      case 's': case 'S': setS({ sbs: SBS_ORDER[(SBS_ORDER.indexOf(S.sbs) + 1) % SBS_ORDER.length] }); break;
+      case 'r': case 'R': case 'Home': act('reset'); break;
+      case 'f': case 'F': if (ROLE === 'display') toggleFS(); else handled = false; break;
+      default: handled = false;
+    }
+    if (handled) e.preventDefault();
+  });
+
+  // =====================================================================
+  // CONTROL WINDOW
+  // =====================================================================
+  let running = false;
+  function setStatus() {
+    const open = NATIVE ? nativeConnected : (peer && !peer.closed);
+    document.getElementById('status').innerHTML =
+      'Display: <b>' + (open ? (running ? 'scrolling' : 'paused') : 'not open') + '</b>';
+  }
+  const fields = {
+    speed: v => v + ' px/s', font: v => v + ' vh', width: v => v + '%',
+    top: v => v + '%', lh: v => (+v).toFixed(2), depth: v => v + ' px',
+    weight: v => v, stroke: v => (+v).toFixed(1) + ' px', spacing: v => (+v).toFixed(2) + ' em'
+  };
+  function syncUI() {
+    const ta = document.getElementById('text');
+    if (document.activeElement !== ta) ta.value = S.text;
+    for (const k of Object.keys(fields)) {
+      document.getElementById(k).value = S[k];
+      document.getElementById('v_' + k).textContent = fields[k](S[k]);
+    }
+    document.getElementById('color').value = S.color;
+    document.getElementById('sbs').value = S.sbs;
+  }
+  if (ROLE === 'control') {
+    if (NATIVE) document.getElementById('openDisplay').style.display = 'none';
+    syncUI();
+    let tt;
+    document.getElementById('text').addEventListener('input', (e) => {
+      clearTimeout(tt); const v = e.target.value;
+      tt = setTimeout(() => setS({ text: v }), 250);
+    });
+    for (const k of Object.keys(fields))
+      document.getElementById(k).addEventListener('input', e => setS({ [k]: parseFloat(e.target.value) }));
+    document.getElementById('color').addEventListener('input', e => setS({ color: e.target.value }));
+    document.getElementById('sbs').addEventListener('change', e => setS({ sbs: e.target.value }));
+    document.getElementById('openDisplay').onclick = () => {
+      if (peer && !peer.closed) { peer.focus(); return; }
+      peer = window.open(location.href.split('#')[0] + '#display', 'a3display', 'width=1280,height=720');
+      setTimeout(() => { send({ type: 'settings', S }); setStatus(); }, 600);
+    };
+    document.getElementById('playBtn').onclick = () => act('toggle');
+    document.getElementById('resetBtn').onclick = () => act('reset');
+    setInterval(setStatus, 1000);
+    return;
+  }
+
+  // =====================================================================
+  // DISPLAY WINDOW
+  // =====================================================================
+  const root = document.getElementById('display');
+  let cols = [], panes = [], pos = 0, last = 0, overlayTimer;
+
+  const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const renderText = t => esc(t).replace(/\[[^\]\n]*\]/g, m => '<span class="cue">' + m + '</span>');
+
+  const maxPos = () => cols.length ? Math.max(0, cols[0].scrollHeight - root.clientHeight) : 0;
+  const lineHeightPx = () => S.font * S.lh * root.clientHeight / 100;
+
+  function rebuild() {
+    const ratio = maxPos() ? pos / maxPos() : 0;
+    root.className = 'sbs-' + S.sbs;
+    root.innerHTML = '';
+    cols = []; panes = [];
+    const eyes = { off: [0], left: [-1], right: [1] }[S.sbs] || [-1, 1];
+    for (const eye of eyes) {
+      const pane = document.createElement('div'); pane.className = 'pane';
+      const stage = document.createElement('div'); stage.className = 'stage';
+      const col = document.createElement('div'); col.className = 'col';
+      col.style.cssText = `width:${S.width}%;font-size:${S.font}vh;line-height:${S.lh};color:${S.color};` +
+        `font-weight:${S.weight};letter-spacing:${S.spacing}em;-webkit-text-stroke:${S.stroke}px ${S.color};` +
+        `padding-top:${S.top}vh;padding-bottom:100vh;`;
+      col.dataset.dx = (S.sbs === 'full' || S.sbs === 'half') ? eye * S.depth / 2 : 0;
+      pane.dataset.eye = eye < 0 ? 0 : 1;
+      col.innerHTML = renderText(S.text);
+      const guide = document.createElement('div'); guide.className = 'guide';
+      guide.style.top = `calc(${S.top}vh + ${S.font * S.lh / 2}vh)`;
+      guide.style.borderColor = S.color;
+      stage.append(guide, col); pane.append(stage); root.append(pane);
+      cols.push(col); panes.push(pane);
+    }
+    layoutPanes();
+    pos = ratio * maxPos();
+    paint();
+  }
+
+  // Each eye's pane is anchored to the physical screen halves, not to the window,
+  // so both eyes stay aligned even if the window is not exactly fullscreen.
+  let lastGeom = '';
+  function layoutPanes() {
+    if (S.sbs === 'off') {
+      panes.forEach(p => { p.style.left = '0px'; p.style.width = '100%'; });
+      return;
+    }
+    // In the app the window covers the glasses screen exactly; in a browser, anchor to the physical screen.
+    const half = screen.width / 2;
+    const screenLeft = (screen.availLeft !== undefined ? screen.availLeft : (screen.left || 0));
+    const winLeft = window.screenX - screenLeft;
+    panes.forEach(p => { p.style.left = (p.dataset.eye * half - winLeft) + 'px'; p.style.width = half + 'px'; });
+    lastGeom = [window.screenX, screen.width, screenLeft].join(',');
+  }
+  setInterval(() => {
+    if (S.sbs === 'off' || NATIVE) return;
+    const sl = (screen.availLeft !== undefined ? screen.availLeft : (screen.left || 0));
+    if ([window.screenX, screen.width, sl].join(',') !== lastGeom) layoutPanes();
+  }, 300);
+
+  function paint() {
+    for (const c of cols) c.style.transform = `translate(${c.dataset.dx}px, ${-pos}px)`;
+  }
+
+  function flash(msg) {
+    let o = root.querySelector('.overlay');
+    if (!o) { o = document.createElement('div'); o.className = 'overlay'; root.append(o); }
+    o.textContent = msg; o.style.opacity = 1;
+    clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(() => { o.style.opacity = 0; }, 900);
+  }
+
+  function doCmd(cmd, v) {
+    if (cmd === 'toggle') { running = !running; last = 0; flash(running ? '▶' : '❚❚'); }
+    else if (cmd === 'reset') { pos = 0; running = false; paint(); flash('⏮'); }
+    else if (cmd === 'jump') { pos = Math.min(maxPos(), Math.max(0, pos + v * lineHeightPx())); paint(); }
+    report();
+  }
+
+  let lastReport = 0;
+  function report(force) {
+    const now = performance.now();
+    if (!force && now - lastReport < 200) return;
+    lastReport = now;
+    send({ type: 'pos', p: maxPos() ? pos / maxPos() : 0, running });
+  }
+
+  function tick(t) {
+    if (running) {
+      if (last) {
+        pos += S.speed * (t - last) / 1000;
+        const m = maxPos();
+        if (pos >= m) { pos = m; running = false; }
+        paint();
+        report();
+      }
+      last = t;
+    } else last = 0;
+    requestAnimationFrame(tick);
+  }
+
+  function toggleFS() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+  }
+
+  root.addEventListener('wheel', (e) => {
+    pos = Math.min(maxPos(), Math.max(0, pos + e.deltaY)); paint(); report();
+  }, { passive: true });
+  root.addEventListener('dblclick', toggleFS);
+  window.addEventListener('resize', rebuild);
+
+  rebuild();
+  requestAnimationFrame(tick);
+  send({ type: 'hello' });
+  if (!NATIVE) setTimeout(() => flash('Press F for fullscreen'), 300);
+})();
+</script>
+</body>
+</html>
