@@ -67,7 +67,16 @@ Screen Recording permission once more. `build.sh` clears the stale entry for you
    - *Prompter…* opens the teleprompter
    - *Open at login*
 
-### Prompter keys (control window focused)
+<p align="center"><img src="docs/menu.png" width="300" alt="A3 Monitor menu-bar menu"></p>
+
+### Prompter
+
+*Prompter…* opens the control window on your Mac. Paste your script, set speed, size and legibility;
+the text appears on the glasses.
+
+<p align="center"><img src="docs/prompter.png" width="760" alt="A3 Prompter control window"></p>
+
+#### Keys (control window focused)
 
 | Key | Action |
 |---|---|
