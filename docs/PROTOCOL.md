@@ -12,7 +12,7 @@ and `LXRCompositor.exe`) and testing on a real A3 connected to a Mac. Nothing he
 |---|---|---|
 | 0 | HID, usage page `0x8C` | Raw data pipe, 512-byte reports |
 | 1 | HID | Physical buttons (Consumer Control: volume/brightness; System Control) |
-| 2 | Vendor specific (255) | Bulk channel, used by Lenovo's sensor/SLAM library over WinUSB (not explored) |
+| 2 | Vendor specific (255) | Bulk sensor channel: IN `0x83`, OUT `0x03`; optional head tracking |
 | 3–5 | Audio | Speakers and microphones |
 | 6–9 | Video (UVC) | Cameras |
 | 10 | HID, usage page `0x8C` | **Command channel**, 128-byte reports (called `CMD` in Lenovo's DLL) |
@@ -61,3 +61,28 @@ Once DisplayPort is up, the glasses report a single mode in their EDID:
   this by creating a 1920 × 1080 virtual display and copying it into both halves.
 - Keep the display at its native 3840 × 1080 (not a scaled "looks like" mode), or the halves won't line up.
 - Black pixels are transparent on the optics.
+
+
+## Sensor channel (interface 2)
+
+The optional tracking bridge uses the vendor-specific bulk interface, independently of the HID
+command channel above. Protocol 1.2 was reconstructed from `SensorDataOceanblue.dll` in Lenovo
+VDM 3.5.62 and checked against a macOS hardware recording. This remains unofficial.
+
+| Item | Observed layout |
+|---|---|
+| Command packet | 272 bytes; little-endian envelope `0x4601`, length 258, command byte and payload length, reserved byte, payload area and trailing padding. |
+| Replies | Envelope type `0x46`, reply command is `~command & 0xff`. |
+| IMU (`0x53`) | 208-byte payload: two 104-byte Android-style records. Gyro type 16 and acceleration type 35, with values, biases and nanosecond timestamps. |
+| Pose (`0x54`) | float32 quaternion **x,y,z,w** at offset 0, float32 position at 16, uint64 timestamp at 32. |
+| Session commands | `0x12` GetVRMode, `0x14` StartVRMode, `0x15` StopVRMode, `0x19` GetParam. |
+
+Gyro is interpreted in rad/s and acceleration in m/s² including gravity, following the Android
+uncalibrated sensor layouts. The observed field normally named reserved0 acts as an event counter.
+Quaternion order was checked by matching local angular velocity against the gyro. Position was
+zero in the tested rotational mode; its units and usable positional tracking remain unvalidated.
+
+The live app does not switch tracking modes. It reuses a stream if one is already active and stops
+only a session it started. See [Development](DEVELOPMENT.md) for ownership, coordinate mapping,
+bridge schema and tests. Full byte layouts and decoder notes live in the module docstring of
+`app/TrackingBridge/a3_usb_protocol.py`.

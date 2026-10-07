@@ -187,6 +187,8 @@ final class EyeWindow {
     var shift: CGFloat = 0  // horizontal shift per eye, in pixels (changes perceived distance)
     var lift: CGFloat = 0   // vertical offset in pixels, positive = up
     var scale: CGFloat = 1  // image size within each eye (1 = full)
+    var headOrientation: TrackingQuaternion = .identity
+    var horizontalFOV: Double = 42  // approximate optical FOV; adjustable in tracking UI
 
     init() {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100),
@@ -202,6 +204,7 @@ final class EyeWindow {
 
         let noAnim: [String: CAAction] = [
             "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "hidden": NSNull(), "frame": NSNull(),
+            "transform": NSNull(),
         ]
         let root = CALayer()
         root.backgroundColor = NSColor.black.cgColor
@@ -238,11 +241,32 @@ final class EyeWindow {
             containers[i].frame = CGRect(x: CGFloat(i) * half, y: 0, width: half, height: size.height)
             let dx: CGFloat = mode == .both ? (i == 0 ? shift : -shift) : 0
             let w = half * scale, h = size.height * scale
-            images[i].frame = CGRect(x: (half - w) / 2 + dx, y: (size.height - h) / 2 + lift, width: w, height: h)
+            // Do not set frame on a transformed CALayer. Bounds describe the
+            // source plane; position is the projection's fixed optical centre.
+            images[i].bounds = CGRect(x: 0, y: 0, width: w, height: h)
+            images[i].position = CGPoint(x: half / 2, y: size.height / 2)
+            let projection = MonitorProjection(head: headOrientation,
+                width: Double(half), height: Double(size.height), scale: Double(scale),
+                shift: Double(dx), lift: Double(lift), horizontalFOV: horizontalFOV)
+            var transform = CATransform3DIdentity
+            transform.m11 = CGFloat(projection.m11); transform.m12 = CGFloat(projection.m12)
+            transform.m14 = CGFloat(projection.m14)
+            transform.m21 = CGFloat(projection.m21); transform.m22 = CGFloat(projection.m22)
+            transform.m24 = CGFloat(projection.m24)
+            transform.m41 = CGFloat(projection.m41); transform.m42 = CGFloat(projection.m42)
+            transform.m44 = CGFloat(projection.m44)
+            images[i].transform = transform
+            images[i].isHidden = !projection.isVisible
         }
         containers[0].isHidden = mode == .right
         containers[1].isHidden = mode == .left
         CATransaction.commit()
+    }
+
+    func updateTracking(head: TrackingQuaternion, horizontalFOV: Double) {
+        headOrientation = head
+        self.horizontalFOV = horizontalFOV
+        layout()
     }
 
     func show(_ surface: IOSurface) {
@@ -399,10 +423,13 @@ extension NSScreen {
 
 // MARK: - App
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let virtualScreen = VirtualScreen()
     private let capturer = Capturer()
     private let prompter = Prompter()
+    private let rotationWindow = RotationWindow()
+    private var monitorHead: TrackingQuaternion = .identity
+    private var monitorFOV: Double = 42
     private var eyeWindow: EyeWindow?
     private var statusItem: NSStatusItem!
     private let statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
@@ -438,7 +465,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shift = CGFloat(defaults.double(forKey: "shift"))
         lift = CGFloat(defaults.double(forKey: "lift"))
         let savedScale = defaults.double(forKey: "scale")
-        scale = savedScale > 0 ? CGFloat(savedScale) : 1
+        scale = savedScale.isFinite && savedScale > 0 ? CGFloat(min(1, max(0.5, savedScale))) : 1
+        rotationWindow.setImageScale(Double(scale))
         let w = defaults.integer(forKey: "resW"), h = defaults.integer(forKey: "resH")
         if w > 0 && h > 0 { resolution = PixelSize(w: w, h: h) }
 
@@ -446,6 +474,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMenu()
         buildEditMenu()
         prompter.onClose = { NSApp.deactivate() }  // never NSApp.hide: that would hide the glasses window too
+
+        rotationWindow.onMonitorOrientation = { [weak self] head, fov in
+            guard let self else { return }
+            self.monitorHead = head ?? .identity
+            self.monitorFOV = fov
+            self.eyeWindow?.updateTracking(head: self.monitorHead, horizontalFOV: fov)
+        }
+        rotationWindow.onImageScaleChange = { [weak self] scale in
+            guard let self, scale.isFinite else { return }
+            self.scale = CGFloat(min(1, max(0.5, scale)))
+            self.applyLayout()
+        }
 
         capturer.onFrame = { [weak self] surface in self?.eyeWindow?.show(surface) }
         capturer.onStop = { [weak self] in
@@ -479,6 +519,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         capturer.stop()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard rotationWindow.isRunning else { return .terminateNow }
+        // Keep the run loop alive until Python has stopped its tracking session.
+        rotationWindow.stop { sender.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
 
     // MARK: Screens
@@ -543,6 +590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refresh() {
         guard let screen = glassesScreen() else {
+            rotationWindow.setOutputDisplay(nil)
             capturer.stop()
             streaming = false
             eyeWindow?.hide()
@@ -550,11 +598,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if ensureNativeMode(screen) { return }  // mode switch triggers another refresh
+        rotationWindow.setOutputDisplay(screen.displayID)
         if eyeWindow == nil { eyeWindow = EyeWindow() }
         eyeWindow!.mode = mode
         eyeWindow!.shift = shift
         eyeWindow!.lift = lift
         eyeWindow!.scale = scale
+        eyeWindow!.headOrientation = monitorHead
+        eyeWindow!.horizontalFOV = monitorFOV
         eyeWindow!.place(on: screen)
 
         // Ask for Screen Recording permission once; don't keep retrying (that re-triggers the prompt).
@@ -599,6 +650,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Turn on glasses display", #selector(turnOn)))
         menu.addItem(item("Prompter…", #selector(openPrompter), key: "p"))
+        menu.addItem(item("Head tracking…", #selector(openRotation), key: "t"))
+        menu.addItem(item("Recenter monitor", #selector(recenterMonitor), key: "r"))
+        menu.addItem(item("Stop head tracking", #selector(stopTracking)))
         menu.addItem(.separator())
 
         for (m, title) in [(EyeMode.both, "Both eyes"), (.left, "Left eye only"), (.right, "Right eye only")] {
@@ -621,7 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(resItem)
 
         let sizeMenu = NSMenu()
-        for pct in [100, 95, 90, 85, 80, 75, 70] {
+        for pct in [100, 95, 90, 85, 80, 75, 70, 60, 50] {
             let it = item("\(pct)%", #selector(pickSize(_:)))
             it.representedObject = pct
             sizeItems.append(it)
@@ -651,6 +705,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return it
     }
 
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(recenterMonitor) { return rotationWindow.canRecenter }
+        if menuItem.action == #selector(stopTracking) { return rotationWindow.isRunning }
+        return true
+    }
+
     private func updateChecks() {
         loginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
         for (m, it) in modeItems { it.state = m == mode ? .on : .off }
@@ -672,6 +732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eyeWindow?.lift = lift
         eyeWindow?.scale = scale
         eyeWindow?.layout()
+        rotationWindow.setImageScale(Double(scale))
         defaults.set(mode.rawValue, forKey: "mode")
         defaults.set(Double(shift), forKey: "shift")
         defaults.set(Double(lift), forKey: "lift")
@@ -714,6 +775,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func quit() { NSApp.terminate(nil) }
 
+    @objc private func openRotation() { rotationWindow.open() }
+    @objc private func recenterMonitor() {
+        setStatus(rotationWindow.recenter() ? "Monitor recentered" : "Recenter unavailable; hold still briefly")
+    }
+    @objc private func stopTracking() { rotationWindow.stop() }
+
     @objc private func openPrompter() {
         prompter.open(on: virtualNSScreen())
         if glassesScreen() == nil { setStatus("Prompter open · glasses display not found") }
@@ -729,6 +796,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
+        appMenu.addItem(item("Head tracking…", #selector(openRotation), key: "t"))
+        appMenu.addItem(item("Recenter monitor", #selector(recenterMonitor), key: "r"))
+        appMenu.addItem(item("Stop head tracking", #selector(stopTracking)))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit A3 Monitor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         main.addItem(appItem)
